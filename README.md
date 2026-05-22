@@ -4,15 +4,16 @@ A production‑ready HR automation system that routes natural language requests 
 
 ## Features
 
-- 5 REST endpoints (`/process`, `/audit`, `/memory`, `/health`)
-- Intent classification with confidence scores (LLM + fallback)
-- Sub‑agents: Scheduling, Leave, Compliance, Clarification
-- Two‑tier memory (STM in‑memory TTL, LTM SQLite)
-- Significance scoring logic (confidence + urgency + intent type)
-- Append‑only audit log (SQLite with triggers)
-- Retry & timeout logic for agent calls
-- Graceful fallback for errors (no raw stack traces)
-- Modular design with clear separation of concerns
+- ✅ 6 REST endpoints (including a new root `/` info endpoint)
+- ✅ Intent classification with confidence scores (LLM + keyword fallback)
+- ✅ Sub‑agents: Scheduling, Leave, Compliance, Clarification (now use injected memory context)
+- ✅ Two‑tier memory (STM in‑memory TTL, LTM SQLite)
+- ✅ Significance scoring logic (confidence + urgency + intent type)
+- ✅ Append‑only audit log (SQLite with triggers)
+- ✅ Retry & timeout logic for agent calls
+- ✅ LangGraph conditional branching: low‑confidence requests → direct to ClarificationAgent
+- ✅ Graceful fallback for errors (no raw stack traces)
+- ✅ Modular design with clear separation of concerns
 
 ## Tech Stack
 
@@ -86,6 +87,7 @@ Open `http://localhost:8000/docs` to explore the interactive API documentation.
 
 | Method | Endpoint                         | Description                          |
 |--------|----------------------------------|--------------------------------------|
+| GET    | `/`                              | API information and endpoint list    |
 | POST   | `/process`                       | Send a natural language request      |
 | GET    | `/audit`                         | Retrieve audit log (limit, user_id)  |
 | GET    | `/memory/{user_id}`              | Get user memory (both STM and LTM)   |
@@ -120,7 +122,7 @@ hr_orchestrator/
 ├── app/
 │   ├── main.py                    # FastAPI entry point
 │   ├── orchestrator.py            # LangGraph wrapper (exposes Orchestrator)
-│   ├── langgraph_orchestrator.py  # StateGraph definition
+│   ├── langgraph_orchestrator.py  # StateGraph with confidence branching
 │   ├── llm_classifier.py          # Ollama + mock fallback
 │   ├── audit.py                   # Append‑only SQLite audit log
 │   ├── memory/
@@ -130,10 +132,10 @@ hr_orchestrator/
 │   └── agents/
 │       ├── __init__.py
 │       ├── base.py                # BaseAgent (abstract)
-│       ├── scheduling.py
-│       ├── leave.py
-│       ├── compliance.py
-│       └── clarification.py
+│       ├── scheduling.py          # Uses context memory
+│       ├── leave.py               # Uses context memory
+│       ├── compliance.py          # Uses context memory
+│       └── clarification.py       # Uses context memory
 ├── tests/
 │   └── test_orchestrator.py       # pytest suite
 ├── .env
@@ -143,20 +145,22 @@ hr_orchestrator/
 ```
 
 ## Testing
+
 Run the test suite with:
 ```bash
-pytest tests/ -v
+  pytest tests/ -v
 ```
 All tests use FastAPI’s `TestClient` (synchronous, no extra plugins needed).
 
 ## How It Works
+
+### LangGraph Orchestration with Confidence‑Based Branching
 1. **User request** → FastAPI (`/process`)
-2. **Orchestrator (LangGraph)** invokes nodes in sequence:
+2. **Orchestrator (LangGraph)** invokes nodes:
    - `classify_intent` → LLM (or keyword fallback) returns intent + confidence
-   - `retrieve_memory` → checks STM, then LTM for historical context
-   - `call_agent` → routes to the appropriate sub‑agent (Scheduling, Leave, Compliance, Clarification)
-   - `store_memory` → calculates significance; >0.7 → LTM, else STM
-   - `log_audit` → writes append‑only entry to SQLite
+   - **Conditional branch:** if confidence < 0.6 → go directly to `clarify`
+   - If high confidence: `retrieve_memory` → `call_agent` → `store_memory` → `log_audit`
+   - If low confidence: `clarify` → `store_memory` → `log_audit`
 3. **Response** returned to user.
 
 ### Significance Scoring
@@ -167,10 +171,19 @@ All tests use FastAPI’s `TestClient` (synchronous, no extra plugins needed).
 
 Threshold **0.7** promotes a memory to LTM (persistent); below that stays in STM (expires after TTL).
 
+### Context Injection in Sub‑Agents
+Agents receive a `context` dictionary containing previous memories (e.g., `{"last_leave": {"message": "...", "response": "..."}}`). They use this to personalise responses.
+
+Example from `LeaveAgent`:
+``` python
+if "last_leave" in context:
+    prev = context["last_leave"]
+    return f"Previous request: '{prev['message']}'. Now: '{message}'. Balance: 12 days."
+```
+
 ### Append‑Only Audit Log
 The `audit_log` table in `audit.db` is protected by SQLite triggers that raise an error on `UPDATE` or `DELETE`. All entries contain:
-- timestamp, request_id, user_id, message
-- intent, confidence, agent_used, response, latency_ms
+- timestamp, request_id, user_id, message, intent, confidence, agent_used, response, latency_ms
 
 ## Troubleshooting
 
@@ -184,19 +197,23 @@ The `audit_log` table in `audit.db` is protected by SQLite triggers that raise a
 
 ## Trade‑Offs & Honest Reflection
 
-- **Local LLM (Ollama) vs OpenAI** – free, private, but slower and requires local resources. Fallback classifier ensures functionality when Ollama is unavailable.
-- **Significance threshold (0.7)** – arbitrary but justified by the need to keep only highly relevant interactions in LTM.
-- **Sub‑agent stubs** – do not fully utilise context memory (e.g., they ignore historical context). Acceptable for a demo, but a production system would pass memory into each agent.
-- **LangGraph** – adds complexity, but demonstrates a state‑machine approach required by the assignment. The graph nodes are clean and testable.
+- **Local LLM (Ollama) vs OpenAI** – free, private, but slower; fallback classifier ensures functionality.
+- **Significance threshold (0.7)** – arbitrary but justified by need to keep only highly relevant interactions in LTM.
+- **Sub‑agent stubs** – do not call real APIs, but they now use injected context to personalise responses.
+- **LangGraph** – adds complexity, but demonstrates state‑machine with conditional branching.
+- **Root endpoint** – added to provide API info and avoid 404 on base URL.
 
 ## Future Improvements
+
 - Add LangGraph checkpointing for workflow persistence
 - Replace sub‑agent stubs with real API integrations (calendar, HRIS, policy database)
 - Implement streaming responses for long‑running agents
 - Add structured logging with request ID propagation
 
 ## License
+
 Educational use only – HR Automation Assignment.
 
 ## Acknowledgments
+
 Built with FastAPI, LangGraph, Ollama, and SQLite. Inspired by modern agentic RAG patterns.
