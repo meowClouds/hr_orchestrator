@@ -7,17 +7,17 @@ class BaseAgent(ABC):
     @abstractmethod
     async def process(self, message: str, context: Dict[str, Any]) -> str:
         """
-        Process a request relevant to this agent.
+        Process a request.
 
         Args:
             message: User's natural language request.
-            context: Memory context (e.g., previous interactions, user data).
+            context: Dictionary containing retrieved memory.
+                     Example: {"last_leave": {"message": "...", "response": "..."}}
 
         Returns:
-            Response string to send back to the user.
+            Response string.
         """
         pass
 
     def get_timeout(self) -> float:
-        """Return timeout in seconds for this agent. Can be overridden."""
-        return 5.0  # default timeout
+        return 5.0
