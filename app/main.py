@@ -132,6 +132,13 @@ async def root():
     return {
         "name": "HR Automation Platform",
         "version": "1.0.0",
-        "endpoints": ["/process", "/audit", "/memory/{user_id}", "/memory/{user_id}/{key}", "/health"],
-        "docs": "/docs"
+        "description": "Multi-agent task routing with memory and audit",
+        "endpoints": [
+            {"path": "/process", "method": "POST", "description": "Submit a request"},
+            {"path": "/audit", "method": "GET", "description": "Get audit logs"},
+            {"path": "/memory/{user_id}", "method": "GET", "description": "Get user memory"},
+            {"path": "/memory/{user_id}/{key}", "method": "DELETE", "description": "Delete memory entry"},
+            {"path": "/health", "method": "GET", "description": "Health check"},
+            {"path": "/docs", "method": "GET", "description": "Swagger UI"}
+        ]
     }
