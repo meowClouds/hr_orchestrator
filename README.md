@@ -4,16 +4,16 @@ A production‑ready HR automation system that routes natural language requests 
 
 ## Features
 
-- ✅ 6 REST endpoints (including a new root `/` info endpoint)
-- ✅ Intent classification with confidence scores (LLM + keyword fallback)
-- ✅ Sub‑agents: Scheduling, Leave, Compliance, Clarification (now use injected memory context)
-- ✅ Two‑tier memory (STM in‑memory TTL, LTM SQLite)
-- ✅ Significance scoring logic (confidence + urgency + intent type)
-- ✅ Append‑only audit log (SQLite with triggers)
-- ✅ Retry & timeout logic for agent calls
-- ✅ LangGraph conditional branching: low‑confidence requests → direct to ClarificationAgent
-- ✅ Graceful fallback for errors (no raw stack traces)
-- ✅ Modular design with clear separation of concerns
+- 6 REST endpoints (including a new root `/` info endpoint)
+- Intent classification with confidence scores (LLM + keyword fallback)
+- Sub‑agents: Scheduling, Leave, Compliance, Clarification (now use injected memory context)
+- Two‑tier memory (STM in‑memory TTL, LTM SQLite)
+- Significance scoring logic (confidence + urgency + intent type)
+- Append‑only audit log (SQLite with triggers)
+- Retry & timeout logic for agent calls
+- LangGraph conditional branching: low‑confidence requests → direct to ClarificationAgent
+- Graceful fallback for errors (no raw stack traces)
+- Modular design with clear separation of concerns
 
 ## Tech Stack
 
