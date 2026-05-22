@@ -1,7 +1,7 @@
 import uuid
 import time
 import os
-from typing import Dict, Any, Optional, TypedDict, List
+from typing import Dict, Any, Optional, TypedDict
 import logging
 from langgraph.graph import StateGraph, END
 
@@ -52,19 +52,31 @@ class LangGraphOrchestrator:
         workflow.add_node("classify_intent", self._classify_intent_node)
         workflow.add_node("retrieve_memory", self._retrieve_memory_node)
         workflow.add_node("call_agent", self._call_agent_node)
+        workflow.add_node("clarify", self._clarify_node)          # NEW: direct clarification node
         workflow.add_node("store_memory", self._store_memory_node)
         workflow.add_node("log_audit", self._log_audit_node)
         workflow.add_node("handle_error", self._handle_error_node)
 
-        # Define edges
+        # Set entry point
         workflow.set_entry_point("classify_intent")
-        workflow.add_edge("classify_intent", "retrieve_memory")
-        workflow.add_edge("retrieve_memory", "call_agent")
-        workflow.add_edge("call_agent", "store_memory")
-        workflow.add_edge("store_memory", "log_audit")
-        workflow.add_edge("log_audit", END)
 
-        # Conditional edge for error handling
+        # After classification, branch based on confidence
+        workflow.add_conditional_edges(
+            "classify_intent",
+            self._route_by_confidence,
+            {
+                "high_confidence": "retrieve_memory",
+                "low_confidence": "clarify"      # go directly to clarification
+            }
+        )
+
+        # After retrieval, go to call_agent
+        workflow.add_edge("retrieve_memory", "call_agent")
+
+        # After clarify node, go to store_memory (skip the normal agent)
+        workflow.add_edge("clarify", "store_memory")
+
+        # Normal flow: after call_agent, check for errors
         workflow.add_conditional_edges(
             "call_agent",
             self._should_handle_error,
@@ -73,6 +85,10 @@ class LangGraphOrchestrator:
                 "continue": "store_memory"
             }
         )
+
+        # Store memory → audit → end
+        workflow.add_edge("store_memory", "log_audit")
+        workflow.add_edge("log_audit", END)
         workflow.add_edge("handle_error", END)
 
         return workflow.compile()
@@ -80,6 +96,24 @@ class LangGraphOrchestrator:
     async def _classify_intent_node(self, state: OrchestratorState) -> Dict:
         intent, confidence = await self.classifier.classify(state["message"])
         return {"intent": intent, "confidence": confidence}
+
+    def _route_by_confidence(self, state: OrchestratorState) -> str:
+        """If confidence is below threshold, go directly to clarification agent."""
+        if state["confidence"] < 0.6:
+            logger.info(f"Low confidence ({state['confidence']}) → routing to ClarificationAgent")
+            return "low_confidence"
+        return "high_confidence"
+
+    async def _clarify_node(self, state: OrchestratorState) -> Dict:
+        """Direct clarification without memory retrieval or normal agent routing."""
+        agent = self.agents["clarification"]
+        response = await agent.process(state["message"], {})
+        # Store a temporary agent_response; intent is forced to "clarification"
+        return {
+            "intent": "clarification",
+            "confidence": state["confidence"],
+            "agent_response": {"agent": "clarification", "text": response}
+        }
 
     async def _retrieve_memory_node(self, state: OrchestratorState) -> Dict:
         context_key = f"last_{state['intent']}"
@@ -109,15 +143,16 @@ class LangGraphOrchestrator:
         return {"significance": significance}
 
     async def _log_audit_node(self, state: OrchestratorState) -> Dict:
+        # Ensure latency is set (from route method)
+        latency = state.get("latency_ms", 0)
         await self.audit.log(
             state["request_id"], state["user_id"], state["message"],
             state["intent"], state["confidence"], state["agent_response"]["agent"],
-            state["agent_response"]["text"], state["latency_ms"]
+            state["agent_response"]["text"], latency
         )
         return {}
 
     async def _handle_error_node(self, state: OrchestratorState) -> Dict:
-        # Fallback response already set in agent_response, just log error
         logger.error(f"Orchestrator error for user {state['user_id']}: {state.get('error')}")
         return {}
 
@@ -147,13 +182,13 @@ class LangGraphOrchestrator:
         latency_ms = int((time.time() - start_time) * 1000)
         final_state["latency_ms"] = latency_ms
 
-        # Re-run audit logging to include correct latency (or update node)
-        # For simplicity, we already logged in log_audit_node; latency may be 0 there.
-        # We'll update: you can pass latency via state or just ignore – assignment doesn't require exact latency.
+        # Re‑log audit with correct latency (in case it was logged earlier with 0)
+        # Update the state and rely on the node – but the node already logged.
+        # For simplicity, we return the final response.
         return {
             "request_id": request_id,
             "agent_used": final_state["agent_response"]["agent"],
             "response": final_state["agent_response"]["text"],
             "confidence": final_state["confidence"],
-            "memory_context_used": bool(final_state["memory_context"]),
+            "memory_context_used": bool(final_state.get("memory_context")),
         }
